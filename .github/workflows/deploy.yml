@@ -1,0 +1,72 @@
+# Compile, teste et publie Cap Forme sur GitHub Pages.
+# - à chaque envoi de code sur main ;
+# - chaque lundi à 6 h (heure de Paris en hiver) : met d'abord à jour les prix depuis Open Prices ;
+# - à la demande (onglet Actions → « Run workflow »).
+name: Publication
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write # enregistrer les nouveaux prix
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # Valeurs publiques (déjà visibles dans le site) : l'accès aux données est protégé par les règles de la base.
+  VITE_SUPABASE_URL: https://jnofhruxbbagmcmzfgvc.supabase.co
+  VITE_SUPABASE_ANON_KEY: sb_publishable_0_H6gOB9BqeHWJR73w7kNA_mkXPNkbd
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Mettre à jour les prix (Open Prices)
+        if: github.event_name != 'push'
+        run: npm run prices
+
+      - name: Tests
+        run: npm test
+
+      - name: Enregistrer les nouveaux prix
+        if: github.event_name != 'push'
+        run: |
+          if git diff --quiet -- src/generated/prices.json; then
+            echo "Prix inchangés."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src/generated/prices.json
+            git commit -m "Prix Open Prices du $(date +%F)"
+            git push
+          fi
+
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
